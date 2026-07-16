@@ -1,6 +1,7 @@
-# MFEM phase-field solvers
+# MFEM Contact-Line Dynamics
 
-This repository contains the minimal code needed to reproduce the two- and
+This repository contains MFEM implementations for phase-field contact-line
+dynamics and the minimal code needed to reproduce the two- and
 three-dimensional numerical results in Section 5 of the accompanying droplet
 manuscript. It implements the conservative Allen--Cahn scheme in 2D and 3D
 and the Cahn--Hilliard scheme in 2D. It does not depend on SLOTH.

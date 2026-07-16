@@ -28,7 +28,7 @@ LDLIBS = $(filter-out -lmetis,$(MFEM_LIBS)) -lmetis
 
 help:
 	@printf '%s\n' \
-	  "MFEM_PhaseField make targets" \
+	  "MFEM contact-line dynamics make targets" \
 	  "" \
 	  "Targets:" \
 	  "  make                         Build all executables." \
