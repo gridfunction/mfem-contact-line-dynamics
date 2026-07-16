@@ -1,0 +1,2 @@
+# Copy this file to Make.user and set the path to a configured MFEM tree.
+MFEM_DIR = /path/to/mfem

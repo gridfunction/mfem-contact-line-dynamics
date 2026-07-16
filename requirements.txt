@@ -1,0 +1,4 @@
+matplotlib==3.10.8
+numpy==2.3.5
+pyvista==0.47.0
+vtk==9.6.0

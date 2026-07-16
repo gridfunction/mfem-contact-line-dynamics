@@ -1,0 +1,22 @@
+# Publication repository allow-list. Local runs remain in this working tree,
+# but only the files explicitly unignored below can be committed.
+*
+
+!.gitignore
+!LICENSE
+!README.md
+!Make.user.example
+!requirements.txt
+!makefile
+
+!src/
+!src/ac2d_conservative_wetting.cpp
+!src/ch2d_conservative_wetting.cpp
+!src/ac3d_conservative_wetting.cpp
+
+!scripts/
+!scripts/plot_mfem_2d_paper_figures.py
+!scripts/plot_ac3d_energy_decay.py
+!scripts/plot_ac3d_final_surface.py
+!scripts/plot_ac3d_surface_pair.py
+!scripts/plot_ac3d_symmetric_xz_slice.py
