@@ -13,7 +13,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-import vtk
 from matplotlib.patches import Patch
 
 
@@ -65,6 +64,8 @@ def sharp_cap_parameters(theta_deg: float, mass: float, domain_volume: float = 1
 
 
 def read_pvtu(case_dir: Path, step: int):
+    import vtk
+
     pvtu = case_dir / "ConservativeWettingAC3D" / f"Cycle{step:06d}" / "data.pvtu"
     reader = vtk.vtkXMLPUnstructuredGridReader()
     reader.SetFileName(str(pvtu))

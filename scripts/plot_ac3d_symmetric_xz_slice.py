@@ -14,7 +14,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
-import vtk
 
 
 def history_rows(case_dir: Path) -> list[dict[str, str]]:
@@ -55,6 +54,8 @@ def step_for_time(case_dir: Path, target: float) -> int:
 
 
 def read_pvtu(case_dir: Path, step: int):
+    import vtk
+
     pvtu = case_dir / "ConservativeWettingAC3D" / f"Cycle{step:06d}" / "data.pvtu"
     if not pvtu.exists():
         pvtu = case_dir / "ConservativeWettingAC" / f"Cycle{step:06d}" / "data.pvtu"
@@ -186,14 +187,37 @@ def plot_initial_quarter_rectangle(ax: plt.Axes) -> None:
 
 def make_times_plot(case_dir: Path, theta: float, times: list[float], out_base: Path,
                     quarter: bool = False, append_last: bool = True,
-                    steps_override: list[int] | None = None) -> None:
+                    steps_override: list[int] | None = None, *, paper_layout: bool = False) -> None:
     steps = steps_override if steps_override is not None else [step_for_time(case_dir, t) for t in times]
     if append_last:
         final_step, _, _ = final_step_time_mass(case_dir)
         if final_step not in steps:
             steps.append(final_step)
 
-    fig, axes = plt.subplots(2, 2, figsize=(7.2, 4.25))
+    snapshots = []
+    for step in steps[:4]:
+        time, mass = step_time_mass(case_dir, step)
+        grid, phi = read_pvtu(case_dir, step)
+        snapshots.append((time, mass, extract_y0_grid(grid, phi)))
+    draw_times_plot(theta, snapshots, draw_slice_zero, out_base, quarter, paper_layout=paper_layout)
+    print(f"steps: {steps}")
+
+
+def draw_slice_zero(ax, data, quarter: bool) -> None:
+    xs, zs, field = data
+    if not quarter:
+        xs, field = mirror_x(xs, field)
+    x_grid, z_grid = np.meshgrid(xs, zs)
+    ax.contour(x_grid, z_grid, field, levels=[0.0], colors="tab:blue", linewidths=1.6)
+
+
+def draw_times_plot(theta: float, snapshots, draw_zero, out_base: Path, quarter: bool = False,
+                    *, paper_layout: bool = False) -> None:
+
+    if paper_layout:
+        fig, axes = plt.subplots(1, 4, figsize=(10.8, 2.65))
+    else:
+        fig, axes = plt.subplots(2, 2, figsize=(7.2, 4.25))
     axes = axes.ravel()
     handles = [
         Line2D([0], [0], color="tab:blue", lw=1.6),
@@ -201,22 +225,13 @@ def make_times_plot(case_dir: Path, theta: float, times: list[float], out_base: 
         Line2D([0], [0], color="black", lw=1.35),
     ]
     labels = ["AC", "initial profile", "stationary sharp interface"]
-    for ax, step in zip(axes, steps):
-        time, mass = step_time_mass(case_dir, step)
-        grid, phi = read_pvtu(case_dir, step)
-        xs, zs, quarter_phi = extract_y0_grid(grid, phi)
-        if quarter:
-            plot_x = xs
-            plot_phi = quarter_phi
-        else:
-            plot_x, plot_phi = mirror_x(xs, quarter_phi)
-        x_grid, z_grid = np.meshgrid(plot_x, zs)
+    for ax, (time, mass, data) in zip(axes, snapshots):
         if quarter:
             sharp_x, sharp_z, _, _, _ = sharp_cap_quarter(theta, mass)
         else:
             sharp_x, sharp_z, _, _, _ = sharp_cap(theta, mass)
 
-        ax.contour(x_grid, z_grid, plot_phi, levels=[0.0], colors="tab:blue", linewidths=1.6)
+        draw_zero(ax, data, quarter)
         if quarter:
             plot_initial_quarter_rectangle(ax)
         ax.plot(sharp_x, sharp_z, color="black", lw=1.35)
@@ -228,18 +243,19 @@ def make_times_plot(case_dir: Path, theta: float, times: list[float], out_base: 
         ax.set_title(rf"$t={time:.2f}$", fontsize=10)
         ax.grid(True, alpha=0.18, lw=0.55)
         ax.tick_params(labelsize=8.5)
-    for ax in axes[len(steps):]:
+    for ax in axes[len(snapshots):]:
         ax.axis("off")
     fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False,
                fontsize=9.5, handlelength=2.8)
-    fig.subplots_adjust(left=0.055, right=0.99, bottom=0.065, top=0.855,
-                        wspace=0.08, hspace=0.30)
+    if paper_layout:
+        fig.subplots_adjust(left=0.035, right=0.995, bottom=0.11, top=0.76, wspace=0.16)
+    else:
+        fig.subplots_adjust(left=0.055, right=0.99, bottom=0.065, top=0.855, wspace=0.08, hspace=0.30)
 
     out_base.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_base.with_suffix(".png"), dpi=300, bbox_inches="tight")
     fig.savefig(out_base.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
-    print(f"steps: {steps}")
     print(f"saved: {out_base.with_suffix('.png')}")
     print(f"saved: {out_base.with_suffix('.pdf')}")
 
@@ -256,11 +272,12 @@ def main() -> None:
                         help="Plot only the simulated quarter-domain x-z cutline.")
     parser.add_argument("--no-last", action="store_true",
                         help="Do not append the latest/final saved time to a time-series panel.")
+    parser.add_argument("--paper-layout", action="store_true", help="Use the manuscript's one-row snapshot layout.")
     args = parser.parse_args()
     if args.times or args.steps:
         make_times_plot(args.case_dir, args.theta, args.times or [], args.out_base,
                         args.quarter, append_last=not args.no_last,
-                        steps_override=args.steps)
+                        steps_override=args.steps, paper_layout=args.paper_layout)
     else:
         make_plot(args.case_dir, args.theta, args.out_base, args.step)
 

@@ -35,9 +35,13 @@ def read_history(case_dir: Path) -> dict[str, np.ndarray]:
 
 
 def make_plot(case45: Path, case135: Path, out_base: Path) -> None:
+    draw_energy_figure(read_history(case45), read_history(case135), out_base)
+
+
+def draw_energy_figure(history45, history135, out_base: Path) -> None:
     histories = [
-        (r"$\theta_Y=45^\circ$", read_history(case45), "tab:blue"),
-        (r"$\theta_Y=135^\circ$", read_history(case135), "tab:orange"),
+        (r"$\theta_Y=45^\circ$", history45, "tab:blue"),
+        (r"$\theta_Y=135^\circ$", history135, "tab:orange"),
     ]
 
     fig, axes = plt.subplots(2, 2, figsize=(7.2, 5.0))

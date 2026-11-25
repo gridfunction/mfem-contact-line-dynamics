@@ -44,14 +44,16 @@ help:
 	  "  MFEM_DIR                     Set in Make.user; must point to an MFEM build/source tree." \
 	  "" \
 	  "Example:" \
-	  "  mpirun -np 12 ./build/ac2d_conservative_wetting -theta 45" \
-	  "  mpirun -np 12 ./build/ch2d_conservative_wetting -theta 45" \
+	  "  mpirun -np 8 ./build/ac2d_conservative_wetting -theta 45" \
+	  "  ./build/ch2d_conservative_wetting -theta 45" \
 	  "  mpirun -np 12 ./build/ac3d_conservative_wetting -theta 45"
 
 all: $(EXES)
 
 $(BUILD_DIR)/%: src/%.cpp $(MFEM_LIB_FILE) $(CONFIG_MK) | $(BUILD_DIR)
 	$(MFEM_CXX) $(CXXFLAGS) $< $(LDLIBS) -o $@
+
+$(BUILD_DIR)/ac2d_conservative_wetting $(BUILD_DIR)/ch2d_conservative_wetting: src/wetting_2d_benchmark.hpp
 
 BUILD_DEPS = $(MFEM_CXX) $(CXXFLAGS) -M $(SOURCES) \
 	| sed -E 's@^(.*\.o: *)(.*/)?(.*\.cpp)@build/\2\1\2\3@' > $(DEPS)

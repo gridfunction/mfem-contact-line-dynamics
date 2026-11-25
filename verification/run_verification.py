@@ -2,12 +2,14 @@
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
 import re
 import shlex
 import subprocess
+import time
 
 
 def main():
@@ -36,10 +38,13 @@ def main():
     source = args.source.resolve()
     output = args.output.resolve()
     commands = {}
+    settings = {}
     for case in cases:
+        name = case["case"]
         command = [str(source / case["executable"]), *case["arguments"]]
-        command[command.index("-out") + 1] = str(output / case["case"])
-        commands[case["case"]] = command
+        command[command.index("-out") + 1] = str(output / name)
+        commands[name] = command
+        settings[name] = {"name": name, **case["settings"]}
     if args.dry_run:
         for command in commands.values():
             print(shlex.join(command))
@@ -50,16 +55,36 @@ def main():
         if (output / case).exists():
             parser.error(f"Output exists for {case}. Choose a new --output directory.")
 
-    env = os.environ | manifest["verification_environment_overrides"]
+    overrides = manifest["verification_environment_overrides"]
+    env = os.environ | overrides
+    executable_digests = {
+        executable: sha256(Path(executable).read_bytes()).hexdigest()
+        for executable in {command[0] for command in commands.values()}
+    }
 
     def run(case):
         directory = output / case
         directory.mkdir(parents=True)
+        command = commands[case]
+        description = directory / "run.json"
+        metadata = {
+            "case": settings[case],
+            "command": command,
+            "working_directory": str(source),
+            "environment_overrides": overrides,
+            "executable_sha256": executable_digests[command[0]],
+        }
+        description.write_text(json.dumps(metadata, indent=2) + "\n")
+        began = time.monotonic()
         with (directory / "solver.log").open("w") as log:
             result = subprocess.run(
-                commands[case], cwd=source, env=env,
+                command, cwd=source, env=env,
                 stdout=log, stderr=subprocess.STDOUT, check=False,
             )
+        metadata.update(exit_code=result.returncode, elapsed_seconds=time.monotonic() - began)
+        completed = description.with_suffix(".json.tmp")
+        completed.write_text(json.dumps(metadata, indent=2) + "\n")
+        completed.replace(description)
         print(f"{case} exited with status {result.returncode}", flush=True)
         return result.returncode
 

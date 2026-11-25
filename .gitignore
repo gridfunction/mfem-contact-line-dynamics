@@ -13,6 +13,7 @@
 !src/ac2d_conservative_wetting.cpp
 !src/ch2d_conservative_wetting.cpp
 !src/ac3d_conservative_wetting.cpp
+!src/wetting_2d_benchmark.hpp
 
 !scripts/
 !scripts/plot_mfem_2d_paper_figures.py
@@ -20,3 +21,26 @@
 !scripts/plot_ac3d_final_surface.py
 !scripts/plot_ac3d_surface_pair.py
 !scripts/plot_ac3d_symmetric_xz_slice.py
+!scripts/reproduce_examples.sh
+
+!sharp/
+!sharp/*.md
+!sharp/*.py
+
+!verification/
+!verification/*.csv
+!verification/*.json
+!verification/*.md
+!verification/*.patch
+!verification/*.py
+!verification/*.txt
+!verification/tools/
+!verification/tools/*.py
+!verification/reference/
+!verification/reference/*.csv
+!verification/reference/*.md
+!verification/original_figures/
+!verification/original_figures/*.md
+!verification/original_figures/*.py
+!verification/original_figures/data/
+!verification/original_figures/data/*.json

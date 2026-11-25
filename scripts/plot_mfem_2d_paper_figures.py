@@ -11,7 +11,6 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pyvista as pv
 
 
 PINNED_TIMES = [0.02, 0.2, 1.0]
@@ -70,6 +69,8 @@ def final_file(run_dir: Path, model: str) -> tuple[float, Path]:
 
 
 def contour_segments(pvtu_path: Path, level: float = 0.0) -> list[np.ndarray]:
+    import pyvista as pv
+
     grid = pv.read(pvtu_path)
     contour = grid.contour([level], scalars="phi")
     points = np.asarray(contour.points)
@@ -181,7 +182,8 @@ def save_figure(fig: plt.Figure, out_base: Path) -> None:
     plt.close(fig)
 
 
-def make_interface_figure(theta: float, ac_dir: Path, ch_dir: Path, out_dir: Path) -> None:
+def make_interface_figure(theta: float, ac_dir: Path, ch_dir: Path, out_dir: Path,
+                          *, paper_layout: bool = False) -> None:
     ac_final_time, ac_final_path = final_file(ac_dir, "AC")
     ch_final_time, ch_final_path = final_file(ch_dir, "CH")
     snapshots: list[tuple[str, Path, Path]] = []
@@ -196,13 +198,21 @@ def make_interface_figure(theta: float, ac_dir: Path, ch_dir: Path, out_dir: Pat
         )
     )
 
+    panels = [(title, contour_segments(ac), contour_segments(ch)) for title, ac, ch in snapshots]
+    draw_interface_figure(theta, panels, out_dir, paper_layout=paper_layout)
+
+
+def draw_interface_figure(theta: float, snapshots, out_dir: Path, *, paper_layout: bool = False) -> None:
     x_cap, y_cap = sharp_half_cap(theta)
-    fig, axes = plt.subplots(2, 2, figsize=(7.2, 4.05))
-    for ax, (title, ac_path, ch_path) in zip(axes.ravel(), snapshots):
-        plot_segments(ax, contour_segments(ac_path), color="tab:blue", lw=1.6, label="AC")
+    if paper_layout:
+        fig, axes = plt.subplots(1, 4, figsize=(10.8, 2.54))
+    else:
+        fig, axes = plt.subplots(2, 2, figsize=(7.2, 4.05))
+    for ax, (title, ac_segments, ch_segments) in zip(axes.ravel(), snapshots):
+        plot_segments(ax, ac_segments, color="tab:blue", lw=1.6, label="AC")
         plot_segments(
             ax,
-            contour_segments(ch_path),
+            ch_segments,
             color="tab:orange",
             lw=2.15,
             ls=(0, (3.5, 2.0)),
@@ -228,18 +238,30 @@ def make_interface_figure(theta: float, ac_dir: Path, ch_dir: Path, out_dir: Pat
         fontsize=9.5,
         handlelength=2.8,
     )
-    fig.subplots_adjust(left=0.055, right=0.99, bottom=0.065, top=0.855, wspace=0.08, hspace=0.30)
+    if paper_layout:
+        fig.subplots_adjust(left=0.035, right=0.995, bottom=0.11, top=0.76, wspace=0.16)
+    else:
+        fig.subplots_adjust(left=0.055, right=0.99, bottom=0.065, top=0.855, wspace=0.08, hspace=0.30)
     save_figure(fig, out_dir / f"ac_ch_theta{int(theta)}_interfaces")
 
 
 def make_energy_figure(cases: dict[float, dict[str, Path]], out_dir: Path) -> None:
+    draw_energy_figure(read_case_histories(cases), out_dir)
+
+
+def read_case_histories(cases):
+    return {angle: {model: read_history(path / "time_specialized.csv") for model, path in runs.items()}
+            for angle, runs in cases.items()}
+
+
+def draw_energy_figure(histories, out_dir: Path) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(8.4, 5.5), constrained_layout=True)
     colors = {"AC": "tab:blue", "CH": "tab:orange"}
     linestyles = {"AC": "-", "CH": (0, (3.5, 2.0))}
     for row, theta in enumerate((45.0, 135.0)):
         ax_energy, ax_rate = axes[row]
         for model in ("AC", "CH"):
-            h = read_history(cases[theta][model] / "time_specialized.csv")
+            h = histories[theta][model]
             time = h["time"]
             energy = h["energy"]
             rate = h["energy_decay_rate"]
@@ -268,12 +290,16 @@ def make_energy_figure(cases: dict[float, dict[str, Path]], out_dir: Path) -> No
 
 
 def make_mass_figure(cases: dict[float, dict[str, Path]], out_dir: Path) -> None:
+    draw_mass_figure(read_case_histories(cases), out_dir)
+
+
+def draw_mass_figure(histories, out_dir: Path) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(8.4, 5.2), constrained_layout=True)
     colors = {"AC": "tab:blue", "CH": "tab:orange"}
     for row, theta in enumerate((45.0, 135.0)):
         for col, model in enumerate(("AC", "CH")):
             ax = axes[row, col]
-            h = read_history(cases[theta][model] / "time_specialized.csv")
+            h = histories[theta][model]
             time = h["time"]
             mass = h["mass"]
             drift = mass - mass[0]
@@ -294,14 +320,15 @@ def main() -> None:
     parser.add_argument("--ac135-dir", type=Path, required=True)
     parser.add_argument("--ch135-dir", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, default=Path("figs"))
+    parser.add_argument("--paper-layout", action="store_true", help="Use the manuscript's one-row snapshot layout.")
     args = parser.parse_args()
 
     cases = {
         45.0: {"AC": args.ac45_dir, "CH": args.ch45_dir},
         135.0: {"AC": args.ac135_dir, "CH": args.ch135_dir},
     }
-    make_interface_figure(45.0, args.ac45_dir, args.ch45_dir, args.out_dir)
-    make_interface_figure(135.0, args.ac135_dir, args.ch135_dir, args.out_dir)
+    make_interface_figure(45.0, args.ac45_dir, args.ch45_dir, args.out_dir, paper_layout=args.paper_layout)
+    make_interface_figure(135.0, args.ac135_dir, args.ch135_dir, args.out_dir, paper_layout=args.paper_layout)
     make_energy_figure(cases, args.out_dir)
     make_mass_figure(cases, args.out_dir)
 

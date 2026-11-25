@@ -31,15 +31,20 @@ from plot_ac3d_final_surface import (  # noqa: E402
 )
 
 
-def panel(ax, case_dir: Path, theta: float, step: int | None, title_prefix: str) -> None:
+def surface_snapshot(case_dir: Path, step: int | None):
     if step is None:
         step, time, mass = final_step_time_mass(case_dir)
     else:
         time, mass = step_time_mass(case_dir, step)
-    radius, center_z, contact_radius, _ = sharp_cap_parameters(theta, mass)
     grid, phi = read_pvtu(case_dir, step)
     xs, zs, field = extract_y0_grid(grid, phi)
     r_num, z_num = zero_contour_branch(xs, zs, field)
+    return time, mass, r_num, z_num
+
+
+def panel(ax, snapshot, theta: float, title_prefix: str) -> None:
+    time, mass, r_num, z_num = snapshot
+    radius, center_z, contact_radius, _ = sharp_cap_parameters(theta, mass)
     xn, yn, zn = revolve_curve(r_num, z_num)
     xe, ye, ze = exact_cap_surface(radius, center_z, contact_radius)
     rim_x, rim_y, rim_z = contact_rim(contact_radius)
@@ -67,11 +72,16 @@ def panel(ax, case_dir: Path, theta: float, step: int | None, title_prefix: str)
 
 
 def make_plot(case45: Path, case135: Path, step135: int | None, out_base: Path) -> None:
+    draw_surface_pair(surface_snapshot(case45, None), surface_snapshot(case135, step135),
+                      out_base, final135=step135 is None)
+
+
+def draw_surface_pair(snapshot45, snapshot135, out_base: Path, final135: bool = True) -> None:
     fig = plt.figure(figsize=(7.2, 3.55))
     ax1 = fig.add_subplot(121, projection="3d")
     ax2 = fig.add_subplot(122, projection="3d")
-    panel(ax1, case45, 45.0, None, "final")
-    panel(ax2, case135, 135.0, step135, "final" if step135 is None else "snapshot")
+    panel(ax1, snapshot45, 45.0, "final")
+    panel(ax2, snapshot135, 135.0, "final" if final135 else "snapshot")
     fig.legend(
         handles=[
             Patch(facecolor="tab:blue", edgecolor="none", alpha=0.66, label="AC"),

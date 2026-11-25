@@ -1,52 +1,55 @@
-# Phase-field numerical verification
+# Numerical verification
 
-These files accompany *Phase-Field Models, Sharp Interface Limits, and Numerical Schemes for Contact Line Dynamics*. The CSV histories contain the initial row and every accepted step for the six original examples and the 59 verification runs.
+This directory contains the case manifest, accepted-step histories, and scripts for the numerical verification in Section 5.4 of the manuscript. The reference data support Figure 2 (mesh and time refinement), Table 1 (equilibrium cap errors), and Figure 3 (transient contact-line motion).
 
-| File | Contents |
-| --- | --- |
-| [original_histories.csv](original_histories.csv) | Six original runs, including the 3D Allen–Cahn examples |
-| [verification_histories.csv](verification_histories.csv) | Spatial, temporal, diffuse-thickness and transient studies, their controls, and four 2D reproduction spot checks |
-| [run_manifest.json](run_manifest.json) | Run identifiers, parameters, commands, original history checksums, and executable checksums for the verification runs |
-| [transient_metrics.csv](transient_metrics.csv) | Transient trajectory errors, wall-law residuals, and time-window sensitivity for the cases cited in the manuscript and response |
-| [contact_line_2d_verification.patch](contact_line_2d_verification.patch) | Source changes relative to the solver baseline |
-| [mfem-local.patch](mfem-local.patch) | The local MFEM header change recorded for the verification build |
-| [run_verification.py](run_verification.py) | Standard-library Python runner for the manifest cases |
-| [SHA256SUMS.txt](SHA256SUMS.txt) | Checksums of the files in this folder |
+## Redraw from the reference data
 
-The two history tables retain the source precision of every listed field. The `dt` column is the accepted interval. `dt_retries` counts rejected Newton trials before that accepted interval. `mass` is the integral of the phase field, and `energy_decay_rate` is the energy change from the preceding accepted state divided by `dt`, with a positive value for decay. The initial row has `dt=0` and `nan` for the decay rate.
+Install the Python environment described in the [repository README](../README.md). From the repository root, run:
 
-## Source and build
-
-The new computations used the phase-field solver at commit `4658d3ce079825eaa697c6ed6c1df661be66a3c0` with the included solver patch. The build used MFEM 4.9.1 at `c31510289f23ee29292086a6ed12531b54f767e4` with the included MFEM diff, Open MPI 5.0.7, Hypre 2.33.0, METIS 4.0, SuiteSparse 7.4.0, and Apple Accelerate. Apple Clang 21.0.0 on arm64 compiled the C++17 code with `-O3`. The MFEM diff adds an accessor for nonconforming face interpolation. These conforming Q1 solvers do not call that accessor. [Solver baseline](https://github.com/gridfunction/mfem-contact-line-dynamics/commit/4658d3ce079825eaa697c6ed6c1df661be66a3c0) · [MFEM baseline](https://github.com/mfem/mfem/commit/c31510289f23ee29292086a6ed12531b54f767e4)
-
-From a fresh solver checkout, set `VERIFICATION` to the absolute path of this data folder and prepare the source.
-
-```bash
-git checkout 4658d3ce079825eaa697c6ed6c1df661be66a3c0
-git apply "$VERIFICATION/contact_line_2d_verification.patch"
-cp Make.user.example Make.user
-# Set MFEM_DIR in Make.user to your configured MFEM directory.
-make -j2 build/ac2d_conservative_wetting build/ch2d_conservative_wetting
+```sh
+python verification/tools/postprocess_studies.py \
+  --reference verification/reference --output figures/verification
+python verification/tools/analyze_transients.py \
+  --series verification/reference/transient_series.csv \
+  --sharp verification/reference/sharp_trajectories.csv --output figures/verification
 ```
 
-Configure MFEM with MPI, Hypre, METIS and SuiteSparse. Apply `mfem-local.patch` at the stated MFEM revision before building MFEM to reproduce the recorded source state. The verification cases ran on a single MPI rank. The 2D Cahn–Hilliard cases used the default UMFPACK-backed serial preconditioner. The manifest records the command arguments, executable SHA-256 digests, and process environment overrides. The runner needs Python 3.9 or later.
+The equilibrium table uses the rows with `model=ac` and `variant=main` in [equilibrium_study.csv](reference/equilibrium_study.csv). The redraw uses the saved phase-field differences and transient series and requires no MFEM build.
 
-```bash
-python3 "$VERIFICATION/run_verification.py" --list
-python3 "$VERIFICATION/run_verification.py" --source . --output runs \
-  --include '^space_ac_n32$' --dry-run
-python3 "$VERIFICATION/run_verification.py" --source . --output runs \
-  --include '^space_ac_n32$'
+## Rerun the simulations and compute the results
+
+Build all executables using the [repository README](../README.md). The 2D solvers in this checkout include the verification changes. From the repository root, list or dry-run the cases:
+
+```sh
+python verification/run_verification.py --list
+python verification/run_verification.py --include '^space_ac_n32$' --dry-run
 ```
 
-Omit `--include` to run all 59 cases. Choose a separate output directory for a rerun. The solver writes each case's accepted-step history and geometry diagnostics. Its visualization option regenerates the field files.
+Regenerate the 59 manifest cases and the eight independent sharp trajectories:
 
-## Original runs
+```sh
+python verification/run_verification.py --output Saves/verification-rerun
+python sharp/sharp_ac.py --n 1024 --stretch 0.96 --output-dir Saves/sharp-rerun
+```
 
-The six original histories come from the saved production data. The PVTU component counts indicate 8 MPI ranks for 2D Allen–Cahn, 1 for 2D Cahn–Hilliard, and 12 for 3D Allen–Cahn. The exact original executables remain unverified. Four new 2D spot checks reproduced the accepted-step schedules through the first shared snapshot at time 0.02. The largest absolute energy and mass differences over the compared rows were `4.72e-9` and `7.92e-13`.
+The phase-field runner uses one MPI rank per case. Use `--include` to select a subset and `--workers` to run independent cases concurrently. Choose a fresh output directory for a rerun. Each case writes `run.json`, the solver log, an accepted-step history, and geometry diagnostics. The manifest specifies which cases write ParaView fields.
 
-## Transient metrics
+```sh
+python verification/tools/postprocess_studies.py \
+  --runs Saves/verification-rerun --output figures/verification-rerun
+python verification/tools/analyze_transients.py \
+  --runs Saves/verification-rerun --sharp Saves/sharp-rerun/trajectories.csv \
+  --output figures/verification-rerun
+```
 
-The metric table compares uniformly sampled histories at time spacing 0.002. The two start times are 0.02 and 0.04. The wall speed and apex speed are derivatives of the wall and symmetry-axis zero crossings, estimated with local quadratic fits over half-widths 0.0125 and 0.0075. The `*_window_change` columns report the RMS differences between the two derivatives. The fit uses at least five available samples when possible. Trajectory comparisons to the sharp model are given for Allen–Cahn, with the contact angle in degrees. [Independent sharp-interface solver and setup](https://github.com/gridfunction/mfem-contact-line-dynamics/tree/b80fd5e42426c2db3ef80bacf324ffc8f44a2eac/sharp)
+The first command computes successive field differences and equilibrium errors from the saved fields. The second computes the trajectory and wall-law comparisons from the accepted-step geometry. The resulting `phase_field_refinement.pdf` and `transient_trajectories.pdf` are the two verification figures in the manuscript. The resulting `equilibrium_study.csv` provides the values in Table 1. The [sharp solver instructions](../sharp/README.md) also document the independent spatial and temporal controls.
 
-The wall-law residuals use the measured contact-line speed and dynamic angle. With unit surface tension, the driving force is `cos(theta_Y) - cos(theta_CL)`. The `angle`, `constant_calibrated`, and `constant_nominal` columns use friction `zeta sin(theta_CL)`, `zeta sin(theta_Y)`, and `zeta`, respectively. The profile-adjusted residual replaces `cos(theta_Y)` by `cos(theta_Y)/q` where `q = sqrt(2) delta |grad(phi)|` is evaluated at the wall crossing. `rms_profile_scale_error` measures the RMS deviation of `q` from one.
+## Settings and archived data
+
+- The new tests use the half-domain `[0,1] × [0,1]`, conforming Q1 elements, Young angle 45 degrees, initial liquid half-area 0.125, and unit surface tension and bulk friction. The phase field has a dynamic wetting condition on the substrate and homogeneous Neumann conditions on the other faces. The Cahn–Hilliard chemical potential has zero normal flux on every face.
+- The refinement and transient cases interpolate a tanh profile of signed distance to a parabola continued through the wall. The equilibrium cases use the area-matched circular cap. A tapered bulk nodal adjustment matches the target mass of 0.75 while keeping the zero contour fixed. The spatial and temporal refinement cases are compared at time 0.02. The transient cases record the wall and apex zero crossings and the angle at each accepted step.
+- [Run manifest](run_manifest.json) gives the commands, parameters, executable digests, and recorded environment. [Verification histories](verification_histories.csv) and [original histories](original_histories.csv) include the initial row and every accepted step. The `dt` column is the accepted interval; the energy-decay rate is the energy decrease divided by that interval. [Archived figure inputs](original_figures/) cover the six original runs.
+- [Transient metrics](transient_metrics.csv) report trajectory discrepancies and wall-law residuals. The primary comparison window is 0.02 to 0.186, with a check starting at 0.04. Local quadratic fits to uniformly sampled wall and apex positions give their velocities. The residual evaluates the measured wall speed against the angle-dependent, Young-angle calibrated, and nominal constant friction laws.
+- [Solver patch](contact_line_2d_verification.patch) records the verification changes relative to solver commit `4658d3ce079825eaa697c6ed6c1df661be66a3c0`. Those changes are integrated in the current source. [MFEM patch](mfem-local.patch) records the local header change at MFEM commit `c31510289f23ee29292086a6ed12531b54f767e4`. [Checksums](SHA256SUMS.txt) cover the archived inputs and results.
+
+Numerical reruns can vary slightly with the compiler, solver library versions, and MPI implementation. The archived inputs preserve the results used for the manuscript plots.
