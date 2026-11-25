@@ -1,0 +1,515 @@
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -99,6 +99,35 @@
+ Use `-h` on an executable to list every numerical, solver, output, and
+ time-stepping option.
+ 
++## Two-dimensional verification data
++
++Both 2D executables accept `-theta0 30` to start from a smooth parabolic
++droplet with an initial 30° contact angle. The separate `-theta`
++option sets the Young angle and `-zeta` sets diffuse contact-line friction.
++Use `-cap-init` to start from a circular cap. In that mode the initial angle
++defaults to the Young angle. The original rectangular initialization is the
++default.
++
++The smooth initial fields interpolate `tanh(d/(sqrt(2)*delta))` in the Q1
++space, where `d` is signed Euclidean distance to the parabola or circle
++extended through the substrate. The prescribed half-domain liquid area is
++`0.125`, so the target phase-field mass is `0.75`. A tapered nodal adjustment
++in the appropriate bulk phase matches this mass. The adjustment leaves every
++element intersected by the Q1 zero contour unchanged.
++
++The Q1 solvers write `geometry.csv` at initialization and after each accepted
++step. Its columns report time, step, the outermost zero crossing on the
++substrate, the one-sided Q1 contact angle in degrees, the highest zero crossing
++on the symmetry axis, and `sqrt(2)*delta*|grad(phi)|` at the contact point.
++The local angle and profile scale use the gradient from the adjacent bulk
++element. Use `-no-geom` to disable these diagnostics.
++
++The common visualization times `0.02`, `0.2`, and `1.0` are reached by shortening
++steps that would cross them, including in fixed-step mode. For a time
++refinement study, use a final time and step sizes commensurate with these
++fixed output times. Use `-edrtol -1` to disable early stopping, and check the
++accepted step sizes in `time_specialized.csv`.
++
+ ## Reproduce the paper figures
+ 
+ Set short names for the output directories:
+diff --git a/makefile b/makefile
+--- a/makefile
++++ b/makefile
+@@ -53,6 +53,8 @@
+ $(BUILD_DIR)/%: src/%.cpp $(MFEM_LIB_FILE) $(CONFIG_MK) | $(BUILD_DIR)
+ 	$(MFEM_CXX) $(CXXFLAGS) $< $(LDLIBS) -o $@
+ 
++$(BUILD_DIR)/ac2d_conservative_wetting $(BUILD_DIR)/ch2d_conservative_wetting: src/wetting_2d_benchmark.hpp
++
+ BUILD_DEPS = $(MFEM_CXX) $(CXXFLAGS) -M $(SOURCES) \
+ 	| sed -E 's@^(.*\.o: *)(.*/)?(.*\.cpp)@build/\2\1\2\3@' > $(DEPS)
+ 
+diff --git a/src/ac2d_conservative_wetting.cpp b/src/ac2d_conservative_wetting.cpp
+--- a/src/ac2d_conservative_wetting.cpp
++++ b/src/ac2d_conservative_wetting.cpp
+@@ -25,6 +25,7 @@
+ #include <vector>
+ 
+ #include "mfem.hpp"  // NOLINT [no include directory when naming mfem include file]
++#include "wetting_2d_benchmark.hpp"
+ 
+ namespace {
+ 
+@@ -43,6 +44,9 @@
+   double droplet_y_min = 0.0;
+   double droplet_y_max = 0.25;
+   double theta_deg = 45.0;
++  double theta_initial_deg = -1.0;
++  bool circular_initial = false;
++  bool geometry_history = true;
+   double delta = 0.01;
+   double dt = 0.01;
+   double min_dt = 1.0e-4;
+@@ -145,6 +149,15 @@
+      << "_ny" << opts.ny
+      << "_delta" << NumberToken(opts.delta)
+      << "_dt" << NumberToken(opts.dt);
++  if (opts.circular_initial) {
++    os << "_cap";
++  }
++  if (opts.theta_initial_deg != -1.0) {
++    os << "_theta0" << NumberToken(opts.theta_initial_deg);
++  }
++  if (opts.zeta != 1.0) {
++    os << "_zeta" << NumberToken(opts.zeta);
++  }
+   if (opts.convex_splitting) {
+     os << "_cs";
+   } else if (opts.convex_splitting_until > 0.0) {
+@@ -803,6 +816,15 @@
+   args.AddOption(&opts.ny, "-ny", "--num-elements-y", "Number of elements in y.");
+   args.AddOption(&opts.order, "-o", "--order", "Finite element order.");
+   args.AddOption(&opts.theta_deg, "-theta", "--theta", "Young angle in degrees.");
++  args.AddOption(&opts.theta_initial_deg, "-theta0", "--initial-angle",
++                 "Initial angle in degrees. The default -1 retains the rectangle.");
++  args.AddOption(&opts.circular_initial, "-cap-init", "--circular-cap-initial",
++                 "-parabola-init", "--parabolic-initial",
++                 "Use a smooth circular cap, defaulting its angle to the Young angle.");
++  args.AddOption(&opts.zeta, "-zeta", "--contact-line-friction",
++                 "Positive diffuse contact-line friction coefficient.");
++  args.AddOption(&opts.geometry_history, "-geom", "--geometry-history",
++                 "-no-geom", "--no-geometry-history", "Write boundary-zero diagnostics for Q1.");
+   args.AddOption(&opts.delta, "-delta", "--delta", "Diffuse-interface thickness.");
+   args.AddOption(&opts.dt, "-dt", "--time-step", "Time step size.");
+   args.AddOption(&opts.min_dt, "-dtmin", "--minimum-time-step",
+@@ -847,6 +869,19 @@
+   if (!output_dir_user_set) {
+     opts.output_dir = DefaultOutputDirectory(opts);
+   }
++  const double initial_angle =
++      opts.theta_initial_deg == -1.0 ? opts.theta_deg : opts.theta_initial_deg;
++  const bool smooth_initial = opts.circular_initial || opts.theta_initial_deg != -1.0;
++  const double max_initial_angle = opts.circular_initial ? 180.0 : 90.0;
++  if (!std::isfinite(opts.zeta) || opts.zeta <= 0.0 ||
++      (smooth_initial && (!std::isfinite(initial_angle) || initial_angle <= 0.0 ||
++                          initial_angle >= max_initial_angle || opts.order != 1))) {
++    if (mfem::Mpi::WorldRank() == 0) {
++      std::cerr << "Require positive zeta. Smooth initialization requires Q1 and an angle "
++                << "strictly between 0 and " << max_initial_angle << " degrees.\n";
++    }
++    std::exit(1);
++  }
+   if (opts.preconditioner != "amg" && opts.preconditioner != "gmg") {
+     if (mfem::Mpi::WorldRank() == 0) {
+       std::cerr << "Unknown preconditioner '" << opts.preconditioner
+@@ -924,8 +959,26 @@
+   mfem::ParFiniteElementSpace& fes = *fes_ptr;
+   mfem::ParGridFunction phi(&fes);
+   mfem::ParGridFunction phi_old(&fes);
+-  RectangularDropletCoefficient initial(opts);
+-  phi.ProjectCoefficient(initial);
++  if (opts.circular_initial || opts.theta_initial_deg != -1.0) {
++    const double half_area =
++        (opts.droplet_x_max - opts.droplet_x_min) * (opts.droplet_y_max - opts.droplet_y_min);
++    const double initial_angle =
++        opts.theta_initial_deg == -1.0 ? opts.theta_deg : opts.theta_initial_deg;
++    wetting_benchmark::SmoothDropletCoefficient initial(
++        half_area, initial_angle, opts.delta, opts.circular_initial);
++    const double length_x = opts.x_max - opts.x_min;
++    const double length_y = opts.y_max - opts.y_min;
++    MFEM_VERIFY(initial.Width() < length_x && initial.Height() < length_y,
++                "The prescribed initial droplet must fit inside the far-field boundaries.");
++    phi.ProjectCoefficient(initial);
++    const double target_mass = length_x * length_y - 2.0 * half_area;
++    wetting_benchmark::MatchMassPreservingContour(
++        fes, phi, target_mass - IntegrateGridFunction(fes, phi),
++        std::hypot(length_x / opts.nx, length_y / opts.ny), opts.delta);
++  } else {
++    RectangularDropletCoefficient initial(opts);
++    phi.ProjectCoefficient(initial);
++  }
+   phi_old = phi;
+ 
+   std::unique_ptr<mfem::ParaViewDataCollection> paraview;
+@@ -947,6 +1000,8 @@
+                                    opts.preconditioner_rebuild_iteration_limit,
+                                    hierarchy.get());
+ 
++  wetting_benchmark::GeometryHistory geometry(
++      fes, opts.delta, opts.geometry_history && opts.order == 1, opts.output_dir);
+   std::ofstream history;
+   if (myid == 0) {
+     history.open(opts.output_dir + "/time_specialized.csv");
+@@ -960,6 +1015,7 @@
+   double lambda = 0.0;
+   double energy_old = TotalEnergy(fes, phi, opts);
+   const double mass_initial = IntegrateGridFunction(fes, phi);
++  geometry.Write(phi, step, time);
+ 
+   if (myid == 0) {
+     history << std::setprecision(16) << time << "," << step << ",0,0,0,0,0,"
+@@ -1045,12 +1101,13 @@
+                 << "\n";
+     }
+ 
++    geometry.Write(phi, step, time);
+     phi_old = phi;
+     energy_old = energy;
+     SaveParaview(paraview.get(), opts, step, time, IsPinnedOutputTime(time));
+ 
+     if (opts.energy_decay_rate_tol >= 0.0 && rate < opts.energy_decay_rate_tol) {
+-      if (step % opts.output_every != 0) {
++      if (opts.output_every <= 0 || step % opts.output_every != 0) {
+         SaveParaview(paraview.get(), opts, step, time, true);
+       }
+       if (myid == 0) {
+diff --git a/src/ch2d_conservative_wetting.cpp b/src/ch2d_conservative_wetting.cpp
+--- a/src/ch2d_conservative_wetting.cpp
++++ b/src/ch2d_conservative_wetting.cpp
+@@ -32,6 +32,7 @@
+ #include <vector>
+ 
+ #include "mfem.hpp"  // NOLINT [no include directory when naming mfem include file]
++#include "wetting_2d_benchmark.hpp"
+ 
+ namespace {
+ 
+@@ -50,6 +51,9 @@
+   double droplet_y_min = 0.0;
+   double droplet_y_max = 0.25;
+   double theta_deg = 45.0;
++  double theta_initial_deg = -1.0;
++  bool circular_initial = false;
++  bool geometry_history = true;
+   double delta = 0.01;
+   double dt = 0.01;
+   double min_dt = 1.0e-4;
+@@ -169,6 +173,15 @@
+      << "_ny" << opts.ny
+      << "_delta" << NumberToken(opts.delta)
+      << "_dt" << NumberToken(opts.dt);
++  if (opts.circular_initial) {
++    os << "_cap";
++  }
++  if (opts.theta_initial_deg != -1.0) {
++    os << "_theta0" << NumberToken(opts.theta_initial_deg);
++  }
++  if (opts.zeta != 1.0) {
++    os << "_zeta" << NumberToken(opts.zeta);
++  }
+   return os.str();
+ }
+ 
+@@ -795,6 +808,15 @@
+   args.AddOption(&opts.ny, "-ny", "--num-elements-y", "Number of elements in y.");
+   args.AddOption(&opts.order, "-o", "--order", "Finite element order.");
+   args.AddOption(&opts.theta_deg, "-theta", "--theta", "Young angle in degrees.");
++  args.AddOption(&opts.theta_initial_deg, "-theta0", "--initial-angle",
++                 "Initial angle in degrees. The default -1 retains the rectangle.");
++  args.AddOption(&opts.circular_initial, "-cap-init", "--circular-cap-initial",
++                 "-parabola-init", "--parabolic-initial",
++                 "Use a smooth circular cap, defaulting its angle to the Young angle.");
++  args.AddOption(&opts.zeta, "-zeta", "--contact-line-friction",
++                 "Positive diffuse contact-line friction coefficient.");
++  args.AddOption(&opts.geometry_history, "-geom", "--geometry-history",
++                 "-no-geom", "--no-geometry-history", "Write boundary-zero diagnostics for Q1.");
+   args.AddOption(&opts.delta, "-delta", "--delta", "Diffuse-interface thickness.");
+   args.AddOption(&opts.dt, "-dt", "--time-step", "Target time step size.");
+   args.AddOption(&opts.min_dt, "-dtmin", "--minimum-time-step",
+@@ -834,6 +856,19 @@
+   if (!output_dir_user_set) {
+     opts.output_dir = DefaultOutputDirectory(opts);
+   }
++  const double initial_angle =
++      opts.theta_initial_deg == -1.0 ? opts.theta_deg : opts.theta_initial_deg;
++  const bool smooth_initial = opts.circular_initial || opts.theta_initial_deg != -1.0;
++  const double max_initial_angle = opts.circular_initial ? 180.0 : 90.0;
++  if (!std::isfinite(opts.zeta) || opts.zeta <= 0.0 ||
++      (smooth_initial && (!std::isfinite(initial_angle) || initial_angle <= 0.0 ||
++                          initial_angle >= max_initial_angle || opts.order != 1))) {
++    if (mfem::Mpi::WorldRank() == 0) {
++      std::cerr << "Require positive zeta. Smooth initialization requires Q1 and an angle "
++                << "strictly between 0 and " << max_initial_angle << " degrees.\n";
++    }
++    std::exit(1);
++  }
+   if (opts.preconditioner != "block" && opts.preconditioner != "direct") {
+     if (mfem::Mpi::WorldRank() == 0) {
+       std::cerr << "Unknown preconditioner '" << opts.preconditioner
+@@ -878,8 +913,26 @@
+   mfem::ParGridFunction phi_old(&fes);
+   mfem::ParGridFunction mu(&fes);
+   mfem::ParGridFunction mu_old(&fes);
+-  RectangularDropletCoefficient initial(opts);
+-  phi.ProjectCoefficient(initial);
++  if (opts.circular_initial || opts.theta_initial_deg != -1.0) {
++    const double half_area =
++        (opts.droplet_x_max - opts.droplet_x_min) * (opts.droplet_y_max - opts.droplet_y_min);
++    const double initial_angle =
++        opts.theta_initial_deg == -1.0 ? opts.theta_deg : opts.theta_initial_deg;
++    wetting_benchmark::SmoothDropletCoefficient initial(
++        half_area, initial_angle, opts.delta, opts.circular_initial);
++    const double length_x = opts.x_max - opts.x_min;
++    const double length_y = opts.y_max - opts.y_min;
++    MFEM_VERIFY(initial.Width() < length_x && initial.Height() < length_y,
++                "The prescribed initial droplet must fit inside the far-field boundaries.");
++    phi.ProjectCoefficient(initial);
++    const double target_mass = length_x * length_y - 2.0 * half_area;
++    wetting_benchmark::MatchMassPreservingContour(
++        fes, phi, target_mass - IntegrateGridFunction(fes, phi),
++        std::hypot(length_x / opts.nx, length_y / opts.ny), opts.delta);
++  } else {
++    RectangularDropletCoefficient initial(opts);
++    phi.ProjectCoefficient(initial);
++  }
+   phi_old = phi;
+   mu = 0.0;
+   mu_old = 0.0;
+@@ -900,6 +953,8 @@
+     paraview->RegisterField("mu", &mu);
+   }
+ 
++  wetting_benchmark::GeometryHistory geometry(
++      fes, opts.delta, opts.geometry_history && opts.order == 1, opts.output_dir);
+   std::ofstream history;
+   if (myid == 0) {
+     history.open(opts.output_dir + "/time_specialized.csv");
+@@ -911,6 +966,7 @@
+   int step = 0;
+   double energy_old = TotalEnergy(fes, phi, opts);
+   const double mass_initial = IntegrateGridFunction(fes, phi);
++  geometry.Write(phi, step, time);
+ 
+   if (myid == 0) {
+     history << std::setprecision(16) << time << "," << step << ",0,0,0,0,0,"
+@@ -992,6 +1048,7 @@
+                 << "\n";
+     }
+ 
++    geometry.Write(phi, step, time);
+     phi_old = phi;
+     mu_old = mu;
+     energy_old = energy;
+diff --git a/src/wetting_2d_benchmark.hpp b/src/wetting_2d_benchmark.hpp
+new file mode 100644
+--- /dev/null
++++ b/src/wetting_2d_benchmark.hpp
+@@ -0,0 +1,198 @@
++#ifndef WETTING_2D_BENCHMARK_HPP
++#define WETTING_2D_BENCHMARK_HPP
++
++#include <algorithm>
++#include <cmath>
++#include <fstream>
++#include <iomanip>
++#include <limits>
++#include <string>
++
++#include "mfem.hpp"
++
++namespace wetting_benchmark {
++
++constexpr double kPi = 3.141592653589793238462643383279502884;
++
++// The full parabola or circle extends through the wall. Measuring distance to
++// this extension gives a smooth phase-field profile across the contact point.
++class SmoothDropletCoefficient : public mfem::Coefficient {
++ public:
++  SmoothDropletCoefficient(double half_area, double theta_deg, double delta, bool circular)
++      : circular_(circular), scale_(std::sqrt(2.0) * delta) {
++    const double theta = theta_deg * kPi / 180.0;
++    if (circular_) {
++      radius_ = std::sqrt(2.0 * half_area / (theta - std::sin(theta) * std::cos(theta)));
++      height_ = radius_ * (1.0 - std::cos(theta));
++      width_ = theta >= 0.5 * kPi ? radius_ : radius_ * std::sin(theta);
++    } else {
++      width_ = std::sqrt(3.0 * half_area / std::tan(theta));
++      height_ = 3.0 * half_area / (2.0 * width_);
++      curvature_factor_ = height_ / (width_ * width_);
++    }
++  }
++
++  double Width() const { return width_; }
++  double Height() const { return height_; }
++
++  mfem::real_t Eval(mfem::ElementTransformation& trans,
++                    const mfem::IntegrationPoint& ip) override {
++    mfem::Vector point;
++    trans.Transform(ip, point);
++    const double x = std::abs(point(0));
++    const double y = point(1);
++    if (circular_) {
++      return std::tanh((std::hypot(x, y + radius_ - height_) - radius_) / scale_);
++    }
++
++    const double k = curvature_factor_;
++    const double vertical_offset = height_ - y;
++    // The derivative of squared distance is twice
++    // 2 k^2 s^3 + (1 - 2 k (H-y)) s - x. For x>0 it has one positive
++    // root. Its monotone part is bounded by the two limits below.
++    const double cubic = 2.0 * k * k;
++    const double linear = 1.0 - 2.0 * k * vertical_offset;
++    double lower = std::sqrt(std::max(0.0, -linear / (3.0 * cubic)));
++    double upper = std::max(x, std::sqrt(std::max(0.0, vertical_offset / k)));
++    for (int iteration = 0; iteration < 42; ++iteration) {
++      const double middle = 0.5 * (lower + upper);
++      if ((cubic * middle * middle + linear) * middle < x) {
++        lower = middle;
++      } else {
++        upper = middle;
++      }
++    }
++    const double s = 0.5 * (lower + upper);
++    const double distance = std::hypot(s - x, vertical_offset - k * s * s);
++    const double sign = y < height_ - k * x * x ? -1.0 : 1.0;
++    return sign * std::tanh(distance / scale_);
++  }
++
++ private:
++  bool circular_;
++  double scale_;
++  double radius_ = 0.0;
++  double width_ = 0.0;
++  double height_ = 0.0;
++  double curvature_factor_ = 0.0;
++};
++
++// Adjust the appropriate bulk phase toward zero with a smooth taper and
++// unchanged sign. The taper occupies a fixed band at resolved mesh sizes,
++// and no Q1 element cut by the zero contour is changed.
++inline void MatchMassPreservingContour(mfem::ParFiniteElementSpace& fes,
++                                       mfem::ParGridFunction& phi, double mass_error,
++                                       double cell_diagonal, double delta) {
++  if (std::abs(mass_error) <= 1.0e-13) {
++    return;
++  }
++  mfem::ConstantCoefficient one(1.0);
++  mfem::ParLinearForm mass_form(&fes);
++  mass_form.AddDomainIntegrator(new mfem::DomainLFIntegrator(one));
++  mass_form.Assemble();
++  mfem::Vector mass_weights(fes.GetTrueVSize());
++  mass_form.ParallelAssemble(mass_weights);
++
++  mfem::Vector phase;
++  phi.GetTrueDofs(phase);
++  mfem::Vector capacity(phase.Size());
++  const double sign = mass_error > 0.0 ? 1.0 : -1.0;
++  const double start_distance = std::max(1.25 * delta, cell_diagonal);
++  const double scale = std::sqrt(2.0) * delta;
++  const double lower = std::tanh(start_distance / scale);
++  const double upper = std::tanh((start_distance + delta) / scale);
++  MFEM_VERIFY(upper > lower, "The diffuse interface is too thin to match the initial mass.");
++  for (int i = 0; i < phase.Size(); ++i) {
++    const double magnitude = -sign * phase(i);
++    const double t = std::clamp((magnitude - lower) / (upper - lower), 0.0, 1.0);
++    capacity(i) = magnitude * t * t * (3.0 - 2.0 * t);
++  }
++  const double available = mfem::InnerProduct(fes.GetComm(), mass_weights, capacity);
++  MFEM_VERIFY(std::abs(mass_error) < available,
++              "Cannot match the initial mass outside the diffuse interface; refine the mesh.");
++  phase.Add(mass_error / available, capacity);
++  phi.SetFromTrueDofs(phase);
++}
++
++class GeometryHistory {
++ public:
++  GeometryHistory(mfem::ParFiniteElementSpace& fes, double delta, bool enabled,
++                  const std::string& output_dir)
++      : fes_(fes), profile_scale_(std::sqrt(2.0) * delta), enabled_(enabled) {
++    if (!enabled_) {
++      return;
++    }
++    MPI_Comm_rank(fes_.GetComm(), &rank_);
++    for (int b = 0; b < fes_.GetNBE(); ++b) {
++      const int attr = fes_.GetParMesh()->GetBdrAttribute(b);
++      if (attr == 1 || attr == 4) {
++        edges_.Append(b);
++      }
++    }
++    if (rank_ == 0) {
++      file_.open(output_dir + "/geometry.csv");
++      MFEM_VERIFY(file_.is_open(), "Cannot open 2D geometry history.");
++      file_ << "time,step,x_cl,theta_cl_deg,apex_y,wall_profile_scale\n" << std::setprecision(16);
++    }
++  }
++
++  void Write(const mfem::ParGridFunction& phi, int step, double time) {
++    if (!enabled_) {
++      return;
++    }
++    const double missing = -std::numeric_limits<double>::infinity();
++    const double nan = std::numeric_limits<double>::quiet_NaN();
++    struct LocatedValue {
++      double value;
++      int rank;
++    };
++    LocatedValue local[2] = {{missing, rank_}, {missing, rank_}};
++    double wall[2] = {nan, nan};
++    mfem::IntegrationPoint first, last, root;
++    first.Set1w(0.0, 1.0);
++    last.Set1w(1.0, 1.0);
++    mfem::Vector point, gradient;
++    for (int b : edges_) {
++      auto* trans = fes_.GetBdrElementTransformation(b);
++      const double a = phi.GetValue(*trans, first);
++      const double c = phi.GetValue(*trans, last);
++      if ((a <= 0.0) == (c <= 0.0)) {
++        continue;
++      }
++      root.Set1w(a / (a - c), 1.0);
++      trans->Transform(root, point);
++      if (trans->Attribute == 1 && point(0) > local[0].value) {
++        local[0].value = point(0);
++        trans->SetIntPoint(&root);
++        phi.GetGradient(*trans, gradient);
++        const double magnitude = gradient.Norml2();
++        wall[0] = std::acos(std::clamp(gradient(1) / magnitude, -1.0, 1.0)) * 180.0 / kPi;
++        wall[1] = profile_scale_ * magnitude;
++      } else if (trans->Attribute == 4) {
++        local[1].value = std::max(local[1].value, point(1));
++      }
++    }
++
++    LocatedValue global[2];
++    MPI_Allreduce(local, global, 2, MPI_DOUBLE_INT, MPI_MAXLOC, fes_.GetComm());
++    MPI_Bcast(wall, 2, MPI_DOUBLE, global[0].rank, fes_.GetComm());
++    if (rank_ == 0) {
++      const double footprint = std::isfinite(global[0].value) ? global[0].value : nan;
++      const double apex = std::isfinite(global[1].value) ? global[1].value : nan;
++      file_ << time << ',' << step << ',' << footprint << ',' << wall[0] << ','
++            << apex << ',' << wall[1] << '\n';
++    }
++  }
++
++ private:
++  mfem::ParFiniteElementSpace& fes_;
++  double profile_scale_;
++  bool enabled_;
++  int rank_ = 0;
++  mfem::Array<int> edges_;
++  std::ofstream file_;
++};
++
++}  // namespace wetting_benchmark
++
++#endif
